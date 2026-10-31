@@ -34,7 +34,14 @@ jobs:
           mkdir -p .cache/mesa-tools/bin
           ln -sf "$PWD/.cache/mesa-venv/bin/meson" .cache/mesa-tools/bin/meson
           ln -sf "$PWD/.cache/mesa-venv/bin/ninja" .cache/mesa-tools/bin/ninja
+          set +e
           python3 scripts/build-turnip-darwin.py --target ios
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "=== build log tail ==="
+            tail -40 .cache/mesa-tu-ios-build.log 2>/dev/null || true
+            exit $rc
+          fi
           find build/mesa-tu-ios -name '*.dylib' -o -name '*.a' | head -20
       - name: build plugin
         run: |
