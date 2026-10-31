@@ -30,7 +30,7 @@ jobs:
         run: |
           cd UniXNU
           python3 -m venv .cache/mesa-venv
-          .cache/mesa-venv/bin/pip install -q meson ninja
+          .cache/mesa-venv/bin/pip install -q meson ninja mako pyyaml packaging
           mkdir -p .cache/mesa-tools/bin
           ln -sf "$PWD/.cache/mesa-venv/bin/meson" .cache/mesa-tools/bin/meson
           ln -sf "$PWD/.cache/mesa-venv/bin/ninja" .cache/mesa-tools/bin/ninja
