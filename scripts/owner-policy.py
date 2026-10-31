@@ -14,6 +14,7 @@ import hashlib
 import importlib.util
 import json
 import plistlib
+import re
 import stat
 import subprocess
 import uuid
@@ -55,6 +56,10 @@ if len(found) != 1:
     raise SystemExit('Require one existing exact read-only image attachment of ' + str(source))
 entities = found[0]['system-entities']
 whole = [e['dev-entry'] for e in entities if e.get('content-hint') == 'GUID_partition_scheme']
+if not whole:
+    # A raw image (no GPT) exposes one partition entity; the whole virtual media is
+    # its parent disk, i.e. the entity node without the trailing 'sN'.
+    whole = [re.sub(r's\d+$', '', entities[0]['dev-entry'])] if entities else []
 if len(whole) != 1:
     raise SystemExit('Require one actual whole virtual media mapping')
 info = plistlib.loads(subprocess.check_output(['diskutil', 'info', '-plist', whole[0]]))

@@ -75,7 +75,16 @@ jobs:
           ./unixnu build kernel 2>&1 | tee "$RUNNER_TEMP/kernel.log"
           test -f "out/sheng/${OS_PROFILE}/sheng_seed/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json"
 
+      - name: Restore the extracted image members
+        id: dmg-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            UniXNU/out/sheng/*/*/tree/.cache/firmware/target-volumes/*.dmg
+          key: ipsw-members-${{ env.OS_DMG_SHA256 }}-${{ env.SYSTEMOS_DMG_SHA256 }}
+
       - name: Extract the two original image members
+        if: steps.dmg-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           TREE="$GITHUB_WORKSPACE/UniXNU/out/sheng/${OS_PROFILE}/sheng_seed/tree"
