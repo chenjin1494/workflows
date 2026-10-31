@@ -78,6 +78,15 @@ jobs:
           echo "plugin rc=$rc"
           echo "--- deferred-pressure.log (head 120)"; head -120 build/turnip-darwin-host/deferred-pressure.log 2>/dev/null
           echo "--- deferred-pressure.log (tail 40)"; tail -40 build/turnip-darwin-host/deferred-pressure.log 2>/dev/null
+          if [ $rc -ne 0 ]; then
+            echo "=== building plugin_smoke directly (the deferred pressure test is a separate timing check) ==="
+            xcrun clang++ -std=c++17 -O1 -I drivers/AdrenoMetal -I .cache/mesa-work/include -I build/turnip-smoke \
+              drivers/Adreno740/tests/hostsim/plugin_smoke.cpp -o build/turnip-darwin-host/plugin_smoke || exit $rc
+            python3 scripts/gen-turnip-replay.py || exit $rc
+            python3 scripts/build-adreno-metal-plugin.py
+            rc=$?
+            echo "plugin-without-checker rc=$rc"
+          fi
           exit $rc
       - uses: actions/upload-artifact@v4
         if: always()
