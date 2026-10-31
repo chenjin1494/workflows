@@ -53,6 +53,14 @@ jobs:
       - name: build plugin
         run: |
           cd UniXNU
+          python3 - <<'EOF'
+          from pathlib import Path
+          p = Path('drivers/Adreno740/tests/hostsim/host_iokit_shim.cpp')
+          s = p.read_text()
+          if 'proc_selfpid' not in s:
+              p.write_text(s + '\nextern "C" int proc_selfpid(void) { return (int)getpid(); }\n')
+              print('patched host shim with proc_selfpid')
+          EOF
           python3 scripts/build-adreno-metal-plugin.py
           ls -la build/adreno-metal-plugin || true
       - uses: actions/upload-artifact@v4
