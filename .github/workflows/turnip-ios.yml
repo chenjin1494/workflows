@@ -45,6 +45,11 @@ jobs:
             exit $rc
           fi
           find build/mesa-tu-ios -name '*.dylib' -o -name '*.a' | head -20
+      - name: build host turnip
+        run: |
+          export PATH="/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:$PATH"
+          cd UniXNU
+          python3 scripts/build-turnip-darwin.py --target host || { tail -30 .cache/mesa-tu-build.log; exit 1; }
       - name: build plugin
         run: |
           cd UniXNU
