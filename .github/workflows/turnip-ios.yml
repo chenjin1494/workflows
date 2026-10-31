@@ -18,6 +18,8 @@ jobs:
           brew install -q meson ninja glslang shaderc bison flex vulkan-headers llvm || true
           rustup toolchain install 1.98.0 --profile minimal || true
           rustup default 1.98.0 || true
+          rustup target add aarch64-apple-ios --toolchain 1.98.0 || true
+          rustup target add aarch64-apple-darwin --toolchain 1.98.0 || true
           python3 -m pip install --user --break-system-packages meson ninja
           xcrun --sdk iphoneos --show-sdk-version
       - name: translator at pin
