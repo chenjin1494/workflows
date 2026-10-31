@@ -1,0 +1,45 @@
+name: turnip-ios
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          path: UniXNU
+          submodules: recursive
+          fetch-depth: 1
+      - name: toolchain
+        run: |
+          brew install -q meson ninja glslang || true
+          python3 -m pip install --user meson ninja
+          xcrun --sdk iphoneos --show-sdk-version
+      - name: mesa at pin
+        run: |
+          git clone --filter=blob:none https://gitlab.freedesktop.org/mesa/mesa.git UniXNU/.cache/mesa-work
+          cd UniXNU/.cache/mesa-work
+          git checkout -q 85fda3b36405bcaea8bffc64aa4f2651dc90770d
+          for p in freedreno-tools-nir ir3-darwin-build-id ir3-portable-asm-roundtrip offline-adreno-compiler-probe turnip-darwin-kmd turnip-graphics-cache-feedback turnip-empty-scissor turnip-builtin-shader-pack turnip-host-import-images; do
+            git apply ../patches/mesa/$p.patch || git apply ../../patches/mesa/$p.patch
+          done
+          git status --porcelain | wc -l
+      - name: build turnip
+        run: |
+          cd UniXNU
+          python3 scripts/build-turnip-darwin.py --target ios
+          find build/mesa-tu-ios -name '*.dylib' -o -name '*.a' | head -20
+      - name: build plugin
+        run: |
+          cd UniXNU
+          python3 scripts/build-adreno-metal-plugin.py
+          ls -la build/adreno-metal-plugin || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turnip-ios
+          path: |
+            UniXNU/build/mesa-tu-ios
+            UniXNU/build/adreno-metal-plugin
+          if-no-files-found: warn
