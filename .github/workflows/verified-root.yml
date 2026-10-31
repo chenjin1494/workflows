@@ -1,0 +1,145 @@
+name: verified-root
+
+# Produces the two macOS-only inputs the sheng kernel chain cannot produce on Linux:
+#   build/verified-root-os/          signed policy for the original OS member
+#   build/verified-root-systemos/    signed policy for the original SystemOS member
+#   build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a
+# Everything is built from public sources plus the public iPad7,1 17.7.11 IPSW; the
+# owner key pair is generated in the job and uploaded with the artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: device defconfig used for the kernel compile records
+        default: sheng_seed_defconfig
+        required: false
+
+env:
+  DEVICE_REPO: UniXNU-sheng
+  OS_PROFILE: ipados-17.7.11-21H461
+  IPSW_URL: https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw
+  OS_DMG: 044-76040-038.dmg
+  OS_DMG_SHA256: 3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d
+  SYSTEMOS_DMG: 044-76034-038.dmg
+  SYSTEMOS_DMG_SHA256: b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f
+  SYSTEMOS_BLOCKS: "806400"
+
+jobs:
+  verified-root:
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host identification
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          df -h / "$RUNNER_TEMP"
+
+      - name: OpenSSL headers for the host provider
+        run: brew install openssl@3 || brew upgrade openssl@3
+
+      - name: Sources
+        run: |
+          git clone --depth 1 https://github.com/UniXNU/UniXNU.git UniXNU
+          git clone --depth 1 "https://github.com/UniXNU/${DEVICE_REPO}.git" "${DEVICE_REPO}"
+          cp configs/sheng_seed_defconfig "${DEVICE_REPO}/configs/"
+          git -C UniXNU log --oneline -1
+          git -C "${DEVICE_REPO}" log --oneline -1
+
+      - name: Configure and fetch
+        working-directory: UniXNU
+        run: |
+          ./unixnu defconfig "${{ inputs.config }}" -D "../${DEVICE_REPO}"
+          ./unixnu status
+          ./unixnu fetch
+
+      - name: Build the kernel compile records
+        working-directory: UniXNU
+        run: |
+          set -o pipefail
+          ./unixnu build kernel 2>&1 | tee "$RUNNER_TEMP/kernel.log"
+          test -f "out/sheng/${OS_PROFILE}/sheng_seed/tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json"
+
+      - name: Extract the two original image members
+        run: |
+          set -euo pipefail
+          TREE="$GITHUB_WORKSPACE/UniXNU/out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          VOL="$TREE/.cache/firmware/target-volumes"
+          mkdir -p "$VOL"
+          curl -L --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/ipad.ipsw" "$IPSW_URL"
+          ls -l "$RUNNER_TEMP/ipad.ipsw"
+          unzip -o -j "$RUNNER_TEMP/ipad.ipsw" "$OS_DMG" "$SYSTEMOS_DMG" -d "$VOL"
+          rm -f "$RUNNER_TEMP/ipad.ipsw"
+          echo "$OS_DMG_SHA256  $VOL/$OS_DMG" | shasum -a 256 -c -
+          echo "$SYSTEMOS_DMG_SHA256  $VOL/$SYSTEMOS_DMG" | shasum -a 256 -c -
+          mkdir -p "$VOL/os-mount" "$VOL/systemos-mount"
+          df -h "$VOL"
+
+      - name: Host provider and owner key pair
+        run: |
+          TREE="$GITHUB_WORKSPACE/UniXNU/out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          bash scripts/build-verified-root-host.sh "$TREE"
+
+      - name: Sign and verify the original OS policy
+        run: |
+          set -euo pipefail
+          TREE="$GITHUB_WORKSPACE/UniXNU/out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          VOL="$TREE/.cache/firmware/target-volumes"
+          hdiutil attach -readonly -noverify -mountpoint "$VOL/os-mount" "$VOL/$OS_DMG"
+          python3 scripts/owner-policy.py --tree "$TREE" --dmg "$VOL/$OS_DMG" \
+            --mount "$VOL/os-mount" --out "$TREE/build/verified-root-os" \
+            --expect-sha256 "$OS_DMG_SHA256" --expect-blocks 1483785
+          hdiutil detach "$VOL/os-mount"
+
+      - name: Sign and verify the original SystemOS policy
+        run: |
+          set -euo pipefail
+          TREE="$GITHUB_WORKSPACE/UniXNU/out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          VOL="$TREE/.cache/firmware/target-volumes"
+          hdiutil attach -readonly -noverify -mountpoint "$VOL/systemos-mount" "$VOL/$SYSTEMOS_DMG"
+          python3 scripts/owner-policy.py --tree "$TREE" --dmg "$VOL/$SYSTEMOS_DMG" \
+            --mount "$VOL/systemos-mount" --out "$TREE/build/verified-root-systemos" \
+            --expect-sha256 "$SYSTEMOS_DMG_SHA256" --expect-blocks "$SYSTEMOS_BLOCKS"
+          hdiutil detach "$VOL/systemos-mount"
+
+      - name: Build the verified-root probe bundle
+        working-directory: UniXNU
+        run: |
+          set -euo pipefail
+          TREE="out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          python3 "$TREE/scripts/build-verified-root-probe.py" --component os --include-systemos
+          ls -l "$TREE/build/verified-root-os-xnu-bundle/"
+          shasum -a 256 "$TREE/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
+
+      - name: Collect
+        run: |
+          set -euo pipefail
+          TREE="UniXNU/out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          mkdir -p out/verified-root
+          for d in verified-root-os verified-root-systemos verified-root-os-xnu-bundle; do
+            cp -a "$TREE/build/$d" out/verified-root/
+          done
+          cp -a "$TREE/build/verified-root-host/keys" out/verified-root/host-keys
+          find out/verified-root -type f -exec shasum -a 256 {} \; | sort -k2 > out/verified-root/SHA256SUMS
+          du -sh out/verified-root/*
+          cat out/verified-root/SHA256SUMS | head -20
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verified-root-inputs
+          path: out/verified-root
+          if-no-files-found: warn
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-log
+          path: ${{ runner.temp }}/kernel.log
+          if-no-files-found: ignore
+          retention-days: 7

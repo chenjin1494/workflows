@@ -1,0 +1,35 @@
+# Seed / bring-up configuration (sheng).
+# Everything that needs a board archive is off, so a fresh clone can link a
+# native kernel and produce the prelink candidate that the storage ABI audit
+# needs (build/storage-abi/interface-audit.json). Not bootable.
+# CONFIG_XNU_BUILD_ARCHIVES is not set
+# CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
+# CONFIG_XNU_NATIVE_RAM_BLOCK is not set
+# CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
+# CONFIG_XNU_OWNER_ROOT_AUDIT is not set
+# CONFIG_XNU_OWNER_ROOT_TRUST is not set
+# CONFIG_XNU_SHENG_PMGR is not set
+# CONFIG_XNU_OWNER_CACHE_MOUNT is not set
+# CONFIG_XNU_OWNER_CACHE_STARTUP is not set
+# CONFIG_XNU_OWNER_BOOT_MANIFEST is not set
+# CONFIG_XNU_OWNER_DATA_MOUNT is not set
+# CONFIG_XNU_OWNER_UNION_SYSTEMOS is not set
+# CONFIG_XNU_BOOT_PROGRESS is not set
+# CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set
+# CONFIG_XNU_ARM_DT_PLATFORM is not set
+# CONFIG_XNU_ARMCPU is not set
+# CONFIG_XNU_SOURCE_CORECRYPTO14 is not set
+# CONFIG_XNU_SOURCE_PTHREAD is not set
+# CONFIG_XNU_NATIVE_AES is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set
+# CONFIG_XNU_SOURCE_MOCKFS is not set
+# CONFIG_XNU_TRUST_CACHE_RUNTIME is not set
+# CONFIG_XNU_NATIVE_ARCH_TIMER is not set
+# CONFIG_XNU_NATIVE_PAN is not set
+# CONFIG_XNU_NATIVE_CS_HASH_CACHE is not set
+# CONFIG_XNU_DT_PANIC_REGION is not set
+# CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE is not set
+# CONFIG_XNU_NATIVE_MOBILE_DISPLAY is not set
+# CONFIG_XNU_ARMVIRT_PLATFORM is not set
+CONFIG_XNU_EXTRA_LD_ARCHIVES=""

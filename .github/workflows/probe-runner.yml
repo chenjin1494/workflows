@@ -1,0 +1,33 @@
+name: probe-runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host identification
+        run: |
+          sw_vers
+          uname -a
+          echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk macosx --show-sdk-version
+          clang --version | head -2
+          python3 --version
+          command -v brew && brew --version | head -1
+          brew --prefix openssl@3 || echo "openssl@3 not installed"
+          df -h / "$RUNNER_TEMP"
+      - name: IPSW reachability
+        run: |
+          URL="https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+          curl -sSIL --retry 3 "$URL" | awk 'BEGIN{IGNORECASE=1} /^HTTP|^content-length|^accept-ranges|^location/ {print}'
+      - name: Disk headroom
+        run: |
+          FREE=$(df -k "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          echo "free KiB: $FREE"
+          if [ "$FREE" -lt 15000000 ]; then echo "::error::less than 15 GB free in RUNNER_TEMP"; exit 1; fi
