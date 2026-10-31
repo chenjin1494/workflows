@@ -23,7 +23,8 @@ clang -dynamiclib -O2 -std=c11 -Wall -Wextra -Werror \
   -L "$OPENSSL_PREFIX/lib" -Wl,-rpath,"$OPENSSL_PREFIX/lib" \
   -lcrypto \
   -o "$OUT/verified-root.dylib" \
-  "$TREE/kits/VerifiedRoot/tests/openssl_provider.c"
+  "$TREE/kits/VerifiedRoot/tests/openssl_provider.c" \
+  "$TREE/kits/VerifiedRoot/src/verified_root.c"
 ls -l "$OUT/verified-root.dylib"
 python3 - "$OUT/verified-root.dylib" <<'PY'
 import ctypes, sys
