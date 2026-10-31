@@ -1,0 +1,37 @@
+name: hvf-capture
+
+# Offline QEMU capture on macOS: does this runner allow the Hypervisor
+# framework, and if so can the sheng ESP fixture reach IOGraphicsFamily?
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_url:
+        description: Release asset URL holding kernel.macho
+        required: false
+        default: ''
+
+jobs:
+  probe-hvf:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host facts
+        run: |
+          sw_vers
+          uname -m
+          sysctl -n kern.hv_support || echo "kern.hv_support unreadable"
+          sysctl -n machdep.cpu.brand_string || true
+      - name: Install QEMU
+        run: |
+          brew install qemu || brew upgrade qemu
+          qemu-system-aarch64 --version
+          qemu-system-aarch64 -accel help || true
+      - name: Hypervisor framework smoke test
+        run: |
+          set -eux
+          # -S + no guest image: if HVF cannot create a VM the process exits
+          # before the gdbstub would ever come up.
+          timeout 20 qemu-system-aarch64 -M virt -accel hvf -cpu host -m 512 \
+            -display none -monitor none -serial none -gdb tcp:127.0.0.1:1234 -S \
+            >hvf.log 2>&1 && echo "HVF-SMOKE: started, gdbstub paused" || { cat hvf.log; echo "HVF-SMOKE: failed"; }
