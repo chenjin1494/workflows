@@ -44,11 +44,19 @@ jobs:
 
       - name: Sources
         run: |
-          git clone --depth 1 https://github.com/UniXNU/UniXNU.git UniXNU
-          git clone --depth 1 "https://github.com/UniXNU/${DEVICE_REPO}.git" "${DEVICE_REPO}"
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/UniXNU/UniXNU.git UniXNU
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            "https://github.com/UniXNU/${DEVICE_REPO}.git" "${DEVICE_REPO}"
           cp configs/sheng_seed_defconfig "${DEVICE_REPO}/configs/"
           git -C UniXNU log --oneline -1
           git -C "${DEVICE_REPO}" log --oneline -1
+
+      - name: Submodules
+        run: |
+          git -C UniXNU submodule update --init --recursive --depth 1
+          git -C "${DEVICE_REPO}" submodule update --init --recursive --depth 1
+          test -f UniXNU/kits/XnuPrelink/patches/xnu-10063.141.1-security-init.patch
 
       - name: Configure and fetch
         working-directory: UniXNU
