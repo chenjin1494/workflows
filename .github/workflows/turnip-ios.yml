@@ -15,7 +15,7 @@ jobs:
       - name: toolchain
         run: |
           brew install -q meson ninja glslang || true
-          python3 -m pip install --user meson ninja
+          python3 -m pip install --user --break-system-packages meson ninja
           xcrun --sdk iphoneos --show-sdk-version
       - name: mesa at pin
         run: |
