@@ -1,0 +1,84 @@
+name: target-volumes
+
+# Harvests the small trust-cache artefacts that live inside the two original OS
+# images. `scripts/build-original-system-trust.py` wants
+#   .cache/firmware/target-volumes/static-trustcache.bin
+# and the payload step wants the bundle built from it. Both are macOS-only to obtain
+# (hdiutil attach), so the job mounts the images read-only, records every
+# trust-cache-shaped file with its sha256, and uploads the copies.
+
+on:
+  workflow_dispatch:
+    inputs:
+      globs:
+        description: shell globs (space separated) relative to each mounted volume
+        default: "System/Library/Caches/com.apple.dyld/* usr/standalone/firmware/* usr/standalone/update/* System/Cryptexes/OS/System/Library/Caches/com.apple.dyld/*"
+        required: false
+
+env:
+  OS_PROFILE: ipados-17.7.11-21H461
+  IPSW_URL: https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw
+  OS_DMG: 044-76040-038.dmg
+  OS_DMG_SHA256: 3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d
+  SYSTEMOS_DMG: 044-76034-038.dmg
+  SYSTEMOS_DMG_SHA256: b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f
+
+jobs:
+  harvest:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Identify the runner
+        run: sw_vers; uname -m; df -h /
+
+      - name: Fetch the two original images
+        run: |
+          set -euo pipefail
+          VOL="$GITHUB_WORKSPACE/vol"
+          mkdir -p "$VOL"
+          curl -L --retry 3 --retry-delay 5 -o "$RUNNER_TEMP/ipad.ipsw" "$IPSW_URL"
+          unzip -o -j "$RUNNER_TEMP/ipad.ipsw" "$OS_DMG" "$SYSTEMOS_DMG" -d "$VOL"
+          rm -f "$RUNNER_TEMP/ipad.ipsw"
+          echo "$OS_DMG_SHA256  $VOL/$OS_DMG" | shasum -a 256 -c -
+          echo "$SYSTEMOS_DMG_SHA256  $VOL/$SYSTEMOS_DMG" | shasum -a 256 -c -
+
+      - name: Mount both images and record trust-cache candidates
+        run: |
+          set -euo pipefail
+          VOL="$GITHUB_WORKSPACE/vol"
+          OUT="$GITHUB_WORKSPACE/harvest"
+          mkdir -p "$OUT/os" "$OUT/systemos"
+          : > "$OUT/list.txt"
+          for pair in "os:$OS_DMG" "systemos:$SYSTEMOS_DMG"; do
+            name="${pair%%:*}"; dmg="${pair#*:}"
+            mount="$VOL/$name-mount"; mkdir -p "$mount"
+            hdiutil attach -readonly -noverify -mountpoint "$mount" "$VOL/$dmg"
+            for g in ${{ inputs.globs }}; do
+              for f in $mount/$g; do
+                [ -f "$f" ] || continue
+                rel="${f#$mount/}"
+                sha=$(shasum -a 256 "$f" | cut -d' ' -f1)
+                size=$(stat -f%z "$f")
+                echo "$name $sha $size $rel" | tee -a "$OUT/list.txt"
+                cp "$f" "$OUT/$name/$(echo "$rel" | tr '/' '_')"
+              done
+            done
+            find "$mount" -maxdepth 6 -name '*trustcache*' -o -maxdepth 6 -name '*trust-cache*' 2>/dev/null \
+              | while read -r f; do
+                  [ -f "$f" ] || continue
+                  sha=$(shasum -a 256 "$f" | cut -d' ' -f1)
+                  echo "$name found $sha $(stat -f%z "$f") ${f#$mount/}" | tee -a "$OUT/list.txt"
+                done
+            hdiutil detach "$mount"
+          done
+          echo "--- candidates ---"
+          sort -u "$OUT/list.txt"
+
+      - name: Upload the harvested files
+        uses: actions/upload-artifact@v4
+        with:
+          name: target-volumes
+          path: harvest
+          if-no-files-found: warn
