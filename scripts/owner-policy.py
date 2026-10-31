@@ -31,6 +31,8 @@ parser.add_argument('--out', type=Path, required=True)
 parser.add_argument('--expect-sha256', required=True)
 parser.add_argument('--expect-blocks', type=int, required=True)
 parser.add_argument('--volume-uuid', type=uuid.UUID)
+parser.add_argument('--require-udif', action='store_true',
+                    help='the member is a UDIF image, so its koly trailer must close the file')
 args = parser.parse_args()
 
 source, volume, out = args.dmg.resolve(), args.mount.resolve(), args.out
@@ -40,9 +42,10 @@ digest = hashlib.sha256()
 with source.open('rb') as stream:
     for chunk in iter(lambda: stream.read(1024 * 1024), b''):
         digest.update(chunk)
-    stream.seek(-512, 2)
-    if stream.read(4) != b'koly':
-        raise SystemExit('Expected the actual original UDIF trailer')
+    if args.require_udif:
+        stream.seek(-512, 2)
+        if stream.read(4) != b'koly':
+            raise SystemExit('Expected the actual original UDIF trailer')
 if digest.hexdigest() != args.expect_sha256:
     raise SystemExit('The compressed image is not the exact supplied member: ' + digest.hexdigest())
 

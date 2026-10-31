@@ -103,7 +103,7 @@ jobs:
           hdiutil attach -readonly -noverify -mountpoint "$VOL/os-mount" "$VOL/$OS_DMG"
           python3 scripts/owner-policy.py --tree "$TREE" --dmg "$VOL/$OS_DMG" \
             --mount "$VOL/os-mount" --out "$TREE/build/verified-root-os" \
-            --expect-sha256 "$OS_DMG_SHA256" --expect-blocks 1483785
+            --expect-sha256 "$OS_DMG_SHA256" --expect-blocks 1483785 --require-udif
           hdiutil detach "$VOL/os-mount"
 
       - name: Sign and verify the original SystemOS policy
