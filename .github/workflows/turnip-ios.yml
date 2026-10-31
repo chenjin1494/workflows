@@ -62,6 +62,16 @@ jobs:
               print('patched host shim with proc_selfpid')
           EOF
           set +e
+          python3 - <<'EOF'
+          from pathlib import Path
+          p = Path('drivers/Adreno740/tests/hostsim/deferred_bo.cpp')
+          s = p.read_text()
+          old = 'REQUIRE(successes(NativeAdrenoMethodBoFree)==beforeFree+257);'
+          if old in s:
+              s = s.replace(old, 'printf("PRESSURE-COUNTS free=%u unmap=%u\\n", successes(NativeAdrenoMethodBoFree), successes(NativeAdrenoMethodBoCpuUnmap));' + old)
+              p.write_text(s)
+              print('added counter diagnostics')
+          EOF
           python3 scripts/build-adreno-metal-plugin.py
           rc=$?
           echo "plugin rc=$rc"
