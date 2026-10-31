@@ -92,6 +92,8 @@ jobs:
             xcrun clang++ -std=c++17 -O1 -I drivers/AdrenoMetal -I .cache/mesa-work/include -I build/turnip-smoke \
               drivers/Adreno740/tests/hostsim/plugin_smoke.cpp -o build/turnip-darwin-host/plugin_smoke || exit $rc
             python3 scripts/gen-turnip-replay.py || exit $rc
+            mkdir -p drivers/NativeMobileDisplay
+            ln -sf ../GopFramebuffer/NativeGOPWire.h drivers/NativeMobileDisplay/NativeGOPWire.h
             python3 scripts/build-adreno-metal-bridge.py --target ios
             echo "bridge rc=$?"
             python3 scripts/build-adreno-metal-plugin.py
