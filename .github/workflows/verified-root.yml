@@ -131,6 +131,10 @@ jobs:
         run: |
           set -euo pipefail
           TREE="out/sheng/${OS_PROFILE}/sheng_seed/tree"
+          # The record carries -I .../EXPORT_HDRS/libsa from the original tree; the seed
+          # configuration never builds libsa, and Xcode clang turns the missing directory
+          # into an error. Nothing in the probe includes from it.
+          mkdir -p "$TREE/build/xnu/ios-obj/EXPORT_HDRS/libsa"
           python3 "$TREE/scripts/build-verified-root-probe.py" --component os --include-systemos
           ls -l "$TREE/build/verified-root-os-xnu-bundle/"
           shasum -a 256 "$TREE/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
