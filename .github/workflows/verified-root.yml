@@ -16,6 +16,9 @@ on:
         required: false
 
 env:
+  # prepare-xnu-source.py sends this to api.github.com only; without it a shared
+  # runner IP hits the anonymous 403 rate limit while restoring the DriverKit headers.
+  GITHUB_TOKEN: ${{ github.token }}
   DEVICE_REPO: UniXNU-sheng
   OS_PROFILE: ipados-17.7.11-21H461
   IPSW_URL: https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw
