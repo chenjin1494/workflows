@@ -10,7 +10,7 @@ jobs:
         with:
           repository: UniXNU/UniXNU
           path: UniXNU
-          ref: f0721e9745c4
+          ref: f0721e9745c45ad2600cd69c74730f1cca55d56a
           submodules: recursive
           fetch-depth: 0
       - name: toolchain
