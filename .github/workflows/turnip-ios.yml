@@ -75,7 +75,8 @@ jobs:
           python3 scripts/build-adreno-metal-plugin.py
           rc=$?
           echo "plugin rc=$rc"
-          for f in build/turnip-darwin-host/*.log; do echo "--- $f"; tail -12 "$f"; done 2>/dev/null
+          echo "--- deferred-pressure.log (head 120)"; head -120 build/turnip-darwin-host/deferred-pressure.log 2>/dev/null
+          echo "--- deferred-pressure.log (tail 40)"; tail -40 build/turnip-darwin-host/deferred-pressure.log 2>/dev/null
           exit $rc
       - uses: actions/upload-artifact@v4
         if: always()
