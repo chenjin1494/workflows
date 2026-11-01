@@ -1,0 +1,59 @@
+name: data-seed
+on:
+  workflow_dispatch:
+    inputs:
+      ipsw:
+        description: restore image URL
+        required: true
+      run_id_note:
+        description: free-form note recorded in the report
+        required: false
+        default: bulk-mbr
+jobs:
+  seed:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: chenjin1494/UniXNU
+          ref: f0721e9745c45ad2600cd69c74730f1cca55d56a
+          path: UniXNU
+          fetch-depth: 0
+      - name: toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          python3 -V
+          hdiutil info >/dev/null
+      - name: ipsw
+        run: |
+          mkdir -p UniXNU/.cache/firmware/target-volumes
+          curl -L --fail --retry 3 -o ipsw.zip "${{ inputs.ipsw }}"
+          ls -l ipsw.zip
+          unzip -o -q ipsw.zip 'BuildManifest.plist' -d ipsw
+          python3 -c "import plistlib,pathlib;m=plistlib.loads(pathlib.Path('ipsw/BuildManifest.plist').read_bytes());[print(n,i['Info'].get('Path')) for n,i in m['BuildIdentities'][0]['Manifest'].items() if 'DMG' in n or 'trustcache' in n.lower()]"
+      - name: mount os volume
+        run: |
+          unzip -o -q ipsw.zip 'Firmware/*.dmg' 'Firmware/*.dmg.trustcache' -d ipsw
+          ls -l ipsw/Firmware | head -20
+          OS=$(python3 -c "import plistlib,pathlib;print(plistlib.loads(pathlib.Path('ipsw/BuildManifest.plist').read_bytes())['BuildIdentities'][0]['Manifest']['OS']['Info']['Path'])")
+          echo "os=$OS"
+          hdiutil attach -nobrowse -readonly "ipsw/$OS" -plist > attach.plist
+          python3 -c "import plistlib,pathlib;d=plistlib.loads(pathlib.Path('attach.plist').read_bytes());[print('MOUNT',e['mount-point']) for e in d.get('system-entities',[]) if e.get('mount-point')]"
+          MNT=$(python3 -c "import plistlib,pathlib;d=plistlib.loads(pathlib.Path('attach.plist').read_bytes());print(next(e['mount-point'] for e in d['system-entities'] if e.get('mount-point')))")
+          cp -a "$MNT/." UniXNU/.cache/firmware/target-volumes/os-mount/
+      - name: seed
+        run: |
+          cd UniXNU
+          python3 scripts/prepare-owner-data-fixture.py
+          python3 scripts/prepare-offline-data.py || true
+          ls -l build/owner-data-fixture/owner-data-32.cdr
+          shasum -a 256 build/owner-data-fixture/owner-data-32.cdr
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: data-seed
+          path: |
+            UniXNU/build/owner-data-fixture/owner-data-32.cdr
+            UniXNU/build/owner-data-fixture/*.json
+          if-no-files-found: warn
