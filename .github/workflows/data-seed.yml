@@ -34,10 +34,14 @@ jobs:
           python3 -c "import plistlib,pathlib;m=plistlib.loads(pathlib.Path('ipsw/BuildManifest.plist').read_bytes());[print(n,i['Info'].get('Path')) for n,i in m['BuildIdentities'][0]['Manifest'].items() if 'DMG' in n or 'trustcache' in n.lower()]"
       - name: mount os volume
         run: |
-          unzip -o -q ipsw.zip 'Firmware/*.dmg' 'Firmware/*.dmg.trustcache' -d ipsw
-          ls -l ipsw/Firmware | head -20
+          unzip -o -q ipsw.zip -d ipsw
+          ls -l ipsw | head -20
           OS=$(python3 -c "import plistlib,pathlib;print(plistlib.loads(pathlib.Path('ipsw/BuildManifest.plist').read_bytes())['BuildIdentities'][0]['Manifest']['OS']['Info']['Path'])")
           echo "os=$OS"
+          if [ ! -f "ipsw/$OS" ]; then
+            OS=$(cd ipsw && ls -S $(find . -name '*.dmg' -not -name '*.dmg.trustcache') | head -1)
+          fi
+          echo "using ipsw/$OS"
           hdiutil attach -nobrowse -readonly "ipsw/$OS" -plist > attach.plist
           python3 -c "import plistlib,pathlib;d=plistlib.loads(pathlib.Path('attach.plist').read_bytes());[print('MOUNT',e['mount-point']) for e in d.get('system-entities',[]) if e.get('mount-point')]"
           MNT=$(python3 -c "import plistlib,pathlib;d=plistlib.loads(pathlib.Path('attach.plist').read_bytes());print(next(e['mount-point'] for e in d['system-entities'] if e.get('mount-point')))")
