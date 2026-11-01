@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: chenjin1494/UniXNU
+          repository: UniXNU/UniXNU
           ref: f0721e9745c45ad2600cd69c74730f1cca55d56a
           path: UniXNU
           fetch-depth: 0
