@@ -38,21 +38,35 @@ jobs:
         run: |
           set -x
           hdiutil create -size 512m -layout NONE -fs APFS -type UDTO /tmp/seed.cdr
-          ls -l /tmp/seed.cdr
-          xxd -l 64 /tmp/seed.cdr || true
-          python3 - <<'PY'
+          for GIB in 3 210; do
+            python3 - "$GIB" <<'PY'
+          import sys
           from pathlib import Path
+          gib = int(sys.argv[1])
           data = Path('/tmp/seed.cdr').read_bytes()
-          with open('/tmp/seed.raw', 'wb') as handle:
-              handle.truncate(3 * 1024**3)
+          target = Path(f'/tmp/seed{gib}.raw')
+          with target.open('wb') as handle:
+              handle.truncate(gib * 1024**3)
               handle.seek(0)
               handle.write(data)
-          print('raw bytes', len(data))
+          print(target, target.stat().st_size, len(data))
           PY
-          hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount -nobrowse /tmp/seed.raw
-          diskutil list
-          diskutil apfs list || true
-          hdiutil info | grep -A3 '/tmp/seed.raw' || true
+            DEV=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount -nobrowse "/tmp/seed${GIB}.raw" | head -1 | tr -d '[:space:]')
+            echo "GIB=$GIB DEV=$DEV"
+            diskutil apfs list "$DEV" || true
+            diskutil apfs list -plist > "/tmp/apfs${GIB}.plist" || true
+            python3 - "$GIB" <<'PY'
+          import plistlib, sys
+          from pathlib import Path
+          gib = sys.argv[1]
+          data = plistlib.loads(Path(f'/tmp/apfs{gib}.plist').read_bytes())
+          print('containers:', len(data.get('Containers', [])))
+          for entry in data.get('Containers', []):
+              print(' ', entry.get('ContainerReference'), [s.get('DeviceIdentifier') for s in entry.get('PhysicalStores', [])],
+                    [vol.get('DeviceIdentifier') for vol in entry.get('Volumes', [])])
+          PY
+            hdiutil detach "$DEV" -force || true
+          done
       - name: Restore image range support
         run: |
           URL="https://updates.cdn-apple.com/2026FallSeed/53df7654-4865-4259-8dae-30177b76f104/UniversalMac_27.3_26C5035r_Restore.ipsw"
