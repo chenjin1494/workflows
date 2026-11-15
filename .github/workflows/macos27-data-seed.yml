@@ -138,6 +138,9 @@ jobs:
       - name: create the seed
         run: |
           cd UniXNU
+          # seed-data-grow.py stages its scratch image under build/, which a fresh
+          # checkout does not have; the seed itself lives in RUNNER_TEMP.
+          mkdir -p build
           OUT="$RUNNER_TEMP/seed"
           rm -rf "$OUT"; mkdir -p "$OUT"
           ARGS="--gib ${{ inputs.gib }} --volume-uuid ${{ inputs.volume_uuid }}"
