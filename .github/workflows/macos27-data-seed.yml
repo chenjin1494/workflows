@@ -135,6 +135,28 @@ jobs:
           test -f "$MNT/usr/share/firmlinks" || { echo "::error::no firmlinks list"; exit 1; }
           test -d "$MNT/System/Library/Templates/Data" || { echo "::error::no Data template"; exit 1; }
           echo "MNT=$MNT" >> "$GITHUB_ENV"
+      - name: grow fallback patch
+        run: |
+          cd UniXNU
+          # macOS 26.7 does not return a raw image's APFS container from
+          # `diskutil apfs list -plist` (the container is live, but only the
+          # synthesized node knows it), which makes seed-data-grow.py exit with
+          # "No APFS container found on the attached seed". The physical store
+          # reference resolves to its container in resizeContainer, so fall back
+          # to it. Nothing else about the growth changes.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/seed-data-grow.py')
+          text = path.read_text()
+          old = """            if not container:
+                sys.exit('No APFS container found on the attached seed')"""
+          new = """            if not container:
+                container = store"""
+          assert old in text, 'grow script does not match the expected source'
+          path.write_text(text.replace(old, new, 1))
+          print('[patched] seed-data-grow.py falls back to the physical store')
+          PY
+          git diff --stat
       - name: create the seed
         run: |
           cd UniXNU
