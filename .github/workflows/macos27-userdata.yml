@@ -1,0 +1,97 @@
+name: macos27-userdata
+
+# macOS-only step #2 for the sheng port: build the userdata root image for
+# macOS 27.3 (26C5035r). Both OS members of the UniversalMac restore are AEA
+# encrypted and only Apple's /usr/bin/aea can open them, so the hdiutil path
+# that unixnu uses for the image assembly has to run here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref:
+        description: UniXNU commit (40 hex)
+        required: true
+        default: 2bc89720371e42dd07eaefe5f8a6c08111aeb300
+      device_ref:
+        description: UniXNU-sheng commit (40 hex)
+        required: true
+        default: 9f5f0fb090a2ca87749941d51d7ac7b38b717008
+      compress_level:
+        description: zstd level for the artifact
+        required: false
+        default: "8"
+
+jobs:
+  userdata:
+    runs-on: macos-26
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ inputs.unixnu_ref }}
+          path: UniXNU
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU-sheng
+          ref: ${{ inputs.device_ref }}
+          path: UniXNU-sheng
+          fetch-depth: 0
+      - name: disk headroom
+        run: df -h / /Users/runner/work 2>/dev/null || df -h /
+      - name: toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          python3 -V
+          (command -v zstd || brew install zstd) >/dev/null
+          (command -v ipsw || brew install blacktop/tap/ipsw) >/dev/null
+          ipsw version || true
+      - name: defconfig
+        run: |
+          cd UniXNU
+          ./unixnu defconfig sheng_macos_defconfig -D ../UniXNU-sheng --os macos-27
+          ./unixnu status --json -D ../UniXNU-sheng --os macos-27 > status.json
+          python3 -c "import json;d=json.load(open('status.json'));print(d['output'], d['components'])"
+      - name: fetch the plain members
+        run: |
+          cd UniXNU
+          time ./unixnu ipsw fetch --os macos-27 -D ../UniXNU-sheng KernelCache DeviceTree StaticTrustCache "Cryptex1,SystemTrustCache" "Cryptex1,AppTrustCache"
+      - name: fetch and decrypt the sealed members
+        run: |
+          cd UniXNU
+          time ./unixnu ipsw fetch --os macos-27 -D ../UniXNU-sheng OS "Cryptex1,SystemOS"
+          ls -l out/ipsw/*/
+          for ARCHIVE in out/ipsw/*/*.dmg.aea; do
+            PLAIN="${ARCHIVE%.aea}"
+            if [ -f "$PLAIN" ]; then echo "plain image present, skipping $PLAIN"; continue; fi
+            KEYLINE=$(ipsw fw aea --key "$ARCHIVE" | grep -m1 '^base64:' || true)
+            if [ -z "$KEYLINE" ]; then echo "::error::no AEA key returned for $ARCHIVE"; exit 1; fi
+            sudo /usr/bin/aea decrypt -i "$ARCHIVE" -o "$PLAIN.partial" -key-value "$KEYLINE"
+            mv "$PLAIN.partial" "$PLAIN"
+            rm -f "$ARCHIVE"
+            ls -l "$PLAIN"
+          done
+      - name: build the userdata image
+        run: |
+          cd UniXNU
+          time ./unixnu build userdata --os macos-27 -D ../UniXNU-sheng
+          OUTDIR=$(python3 -c "import json;print(json.load(open('status.json'))['output'])")
+          ls -l "$OUTDIR/userdata"
+          cat "$OUTDIR/userdata/userdata-root.json"
+      - name: pack the artifact
+        run: |
+          cd UniXNU
+          OUTDIR=$(python3 -c "import json;print(json.load(open('status.json'))['output'])")
+          DEST="$RUNNER_TEMP/userdata"
+          rm -rf "$DEST"; mkdir -p "$DEST"
+          time zstd -T0 -"${{ inputs.compress_level }}" -o "$DEST/userdata-root.img.zst" "$OUTDIR/userdata/userdata-root.img"
+          cp "$OUTDIR/userdata/userdata-root.json" "$DEST/"
+          (cd "$DEST" && shasum -a 256 * > sha256.txt && cat sha256.txt && ls -l)
+      - name: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos27-userdata
+          path: ${{ runner.temp }}/userdata/*
+          if-no-files-found: error
+          retention-days: 7
