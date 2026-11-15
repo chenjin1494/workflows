@@ -38,35 +38,30 @@ jobs:
         run: |
           set -x
           hdiutil create -size 512m -layout NONE -fs APFS -type UDTO /tmp/seed.cdr
-          for GIB in 3 210; do
-            python3 - "$GIB" <<'PY'
-          import sys
+          python3 - <<'PY'
           from pathlib import Path
-          gib = int(sys.argv[1])
           data = Path('/tmp/seed.cdr').read_bytes()
-          target = Path(f'/tmp/seed{gib}.raw')
-          with target.open('wb') as handle:
-              handle.truncate(gib * 1024**3)
+          with open('/tmp/seed210.raw', 'wb') as handle:
+              handle.truncate(210 * 1024**3)
               handle.seek(0)
               handle.write(data)
-          print(target, target.stat().st_size, len(data))
+          print('wrote', len(data))
           PY
-            DEV=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount -nobrowse "/tmp/seed${GIB}.raw" | head -1 | tr -d '[:space:]')
-            echo "GIB=$GIB DEV=$DEV"
-            diskutil apfs list "$DEV" || true
-            diskutil apfs list -plist > "/tmp/apfs${GIB}.plist" || true
-            python3 - "$GIB" <<'PY'
-          import plistlib, sys
-          from pathlib import Path
-          gib = sys.argv[1]
-          data = plistlib.loads(Path(f'/tmp/apfs{gib}.plist').read_bytes())
-          print('containers:', len(data.get('Containers', [])))
-          for entry in data.get('Containers', []):
-              print(' ', entry.get('ContainerReference'), [s.get('DeviceIdentifier') for s in entry.get('PhysicalStores', [])],
-                    [vol.get('DeviceIdentifier') for vol in entry.get('Volumes', [])])
-          PY
-            hdiutil detach "$DEV" -force || true
-          done
+          DEV=$(hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount -nobrowse /tmp/seed210.raw | head -1 | tr -d '[:space:]')
+          echo "DEV=$DEV"
+          diskutil list
+          echo "--- apfs list ---"
+          diskutil apfs list
+          echo "--- try resize by physical store ---"
+          sudo diskutil apfs resizeContainer "$DEV" 0 || echo "resize-by-store failed rc=$?"
+          diskutil list
+          echo "--- synthesized reference ---"
+          SYN=$(diskutil list | awk '/synthesized/ && /APFS Container/ {print $1; exit}')
+          echo "SYN=$SYN"
+          if [ -n "$SYN" ]; then sudo diskutil apfs resizeContainer "$SYN" 0 || echo "resize-by-syn failed rc=$?"; fi
+          diskutil list
+          diskutil apfs list || true
+          hdiutil detach "$DEV" -force || true
       - name: Restore image range support
         run: |
           URL="https://updates.cdn-apple.com/2026FallSeed/53df7654-4865-4259-8dae-30177b76f104/UniversalMac_27.3_26C5035r_Restore.ipsw"
