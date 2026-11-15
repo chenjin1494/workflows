@@ -1,0 +1,185 @@
+name: macos27-data-seed
+
+# macOS 27.3 (26C5035r) Data seed for the sheng port — the one build step that
+# cannot run on the Linux host: hdiutil/diskutil own the APFS volume and the
+# system volume only mounts on macOS. Nothing here touches uefi-sheng; the
+# kernel, package, firmware, payload and boot image stay on the Linux side.
+#
+#   seed = System/Library/Templates/Data + firmlinks list of the target OS,
+#          packed to the DBRDISK1 payload input (<= 256 MiB) with the Data
+#          volume UUID the kernel config pins.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref:
+        description: UniXNU commit (40 hex)
+        required: true
+        default: 2bc89720371e42dd07eaefe5f8a6c08111aeb300
+      device_ref:
+        description: UniXNU-sheng commit (40 hex)
+        required: true
+        default: 9f5f0fb090a2ca87749941d51d7ac7b38b717008
+      os_profile:
+        description: OS profile selector
+        required: true
+        default: macos-27
+      defconfig:
+        description: seed defconfig (context only; the seed needs no kernel)
+        required: false
+        default: sheng_macos_defconfig
+      gib:
+        description: Data volume size in GiB (3..1024)
+        required: true
+        default: "210"
+      volume_uuid:
+        description: Data volume UUID the kernel mounts
+        required: true
+        default: 79157BD4-6A8C-45D6-A0EB-11FEA89BDE46
+      skip_setup:
+        description: mark Setup Assistant done (unattended seeds only)
+        type: choice
+        options: [no, yes]
+        default: no
+      reclaim_disk:
+        description: delete simulator runtimes when headroom is short
+        type: choice
+        options: [auto, off]
+        default: auto
+
+jobs:
+  seed:
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      UNIXNU_IPSW_JOBS: "64"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ inputs.unixnu_ref }}
+          path: UniXNU
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: UniXNU/UniXNU-sheng
+          ref: ${{ inputs.device_ref }}
+          path: UniXNU-sheng
+          fetch-depth: 0
+      - name: disk headroom
+        run: |
+          df -h / "$RUNNER_TEMP"
+          FREE=$(df -k "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          echo "free KiB before: $FREE"
+          if [ "$FREE" -lt 26000000 ] && [ "${{ inputs.reclaim_disk }}" = auto ]; then
+            echo "::notice::reclaiming simulator runtimes (needs ~11 GiB for the AEA archive plus its plain image)"
+            du -sh /Library/Developer/CoreSimulator 2>/dev/null || true
+            sudo rm -rf /Library/Developer/CoreSimulator/Volumes/* || true
+            sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+            rm -rf ~/Library/Developer/Xcode/DerivedData ~/Library/Developer/CoreSimulator/Caches || true
+          fi
+          df -h / "$RUNNER_TEMP"
+          FREE=$(df -k "$RUNNER_TEMP" | awk 'NR==2 {print $4}')
+          echo "free KiB after: $FREE"
+          if [ "$FREE" -lt 24000000 ]; then echo "::error::less than 24 GB free; the decrypt needs room for archive and image"; exit 1; fi
+      - name: toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          python3 -V
+          test -x /usr/bin/aea && /usr/bin/aea -h 2>&1 | head -3 || echo "::warning::no /usr/bin/aea"
+          command -v ipsw || (brew install blacktop/tap/ipsw && command -v ipsw)
+          ipsw version
+      - name: resolve profiles and fetch sources
+        run: |
+          cd UniXNU
+          ./unixnu defconfig "${{ inputs.defconfig }}" -D ../UniXNU-sheng --os "${{ inputs.os_profile }}" || true
+          ./unixnu fetch -D ../UniXNU-sheng --os "${{ inputs.os_profile }}"
+          ./unixnu status --json -D ../UniXNU-sheng --os "${{ inputs.os_profile }}" | head -40
+      - name: extract the OS member
+        run: |
+          cd UniXNU
+          ./unixnu ipsw fetch OS -D ../UniXNU-sheng --os "${{ inputs.os_profile }}"
+          find out/ipsw -maxdepth 2 -type f -printf '%s %p\n' 2>/dev/null || ls -lR out/ipsw | head -40
+      - name: decrypt AEA
+        run: |
+          cd UniXNU
+          ARCHIVE=$(find out/ipsw -name '*.dmg.aea' | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            PLAIN=$(find out/ipsw -name '*.dmg' | head -1)
+            echo "plain image already present: $PLAIN"
+            exit 0
+          fi
+          echo "archive: $ARCHIVE ($(stat -f%z "$ARCHIVE") bytes)"
+          PLAIN="${ARCHIVE%.aea}"
+          if [ -f "$PLAIN" ]; then echo "plain image present, skipping"; exit 0; fi
+          # Same exchange as scripts/unixnu/ipsw.py decrypt_aea: the key URL lives in the
+          # archive header, ipsw fetches it, aea consumes the whole 'base64:' line.
+          KEYLINE=$(ipsw fw aea --key "$ARCHIVE" | grep '^base64:' | head -1)
+          if [ -z "$KEYLINE" ]; then echo "::error::no AEA key returned for $ARCHIVE"; exit 1; fi
+          time /usr/bin/aea decrypt -i "$ARCHIVE" -o "$PLAIN.partial" -key-value "$KEYLINE"
+          mv "$PLAIN.partial" "$PLAIN"
+          hdiutil imageinfo "$PLAIN" | head -20
+          rm -f "$ARCHIVE"
+          df -h "$RUNNER_TEMP"
+      - name: mount the system volume
+        run: |
+          cd UniXNU
+          PLAIN=$(find out/ipsw -name '*.dmg' | head -1)
+          echo "mounting $PLAIN"
+          MNT="$RUNNER_TEMP/os"
+          mkdir -p "$MNT"
+          hdiutil attach -readonly -nobrowse -owners on -mountpoint "$MNT" "$PLAIN" > attach.log
+          cat attach.log | tail -5
+          test -f "$MNT/sbin/launchd" || { echo "::error::not a macOS system volume"; exit 1; }
+          test -f "$MNT/usr/share/firmlinks" || { echo "::error::no firmlinks list"; exit 1; }
+          test -d "$MNT/System/Library/Templates/Data" || { echo "::error::no Data template"; exit 1; }
+          echo "MNT=$MNT" >> "$GITHUB_ENV"
+      - name: create the seed
+        run: |
+          cd UniXNU
+          OUT="$RUNNER_TEMP/seed"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+          ARGS="--gib ${{ inputs.gib }} --volume-uuid ${{ inputs.volume_uuid }}"
+          if [ "${{ inputs.skip_setup }}" = yes ]; then ARGS="$ARGS --skip-setup"; fi
+          time sudo -E python3 scripts/make-macos-data-seed.py "$MNT" "$OUT/data.dbr" $ARGS
+          ls -l "$OUT"
+      - name: detach
+        if: always()
+        run: hdiutil detach "$RUNNER_TEMP/os" || true
+      - name: report
+        run: |
+          OUT="$RUNNER_TEMP/seed"
+          SEED="$OUT/data.dbr"
+          ls -l "$SEED"
+          shasum -a 256 "$SEED" | tee "$OUT/sha256.txt"
+          python3 - "$SEED" <<'PY' | tee "$OUT/seed.json"
+          import hashlib, json, struct, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          blob = path.read_bytes()
+          magic, version, page, logical, count = struct.unpack_from('<8sIIQQ', blob)
+          print(json.dumps({
+              'file': str(path), 'encoded_bytes': len(blob),
+              'encoded_sha256': hashlib.sha256(blob).hexdigest(),
+              'magic': magic.decode('latin-1'), 'version': version, 'page': page,
+              'logical_bytes': logical, 'logical_gib': round(logical / 1024**3, 3),
+              'extents': count,
+              'unixnu_ref': '${{ inputs.unixnu_ref }}',
+              'device_ref': '${{ inputs.device_ref }}',
+              'os_profile': '${{ inputs.os_profile }}',
+              'volume_uuid': '${{ inputs.volume_uuid }}',
+              'skip_setup': '${{ inputs.skip_setup }}',
+          }, indent=2))
+          PY
+          df -h "$RUNNER_TEMP" | tail -2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos27-data-seed
+          path: |
+            ${{ runner.temp }}/seed/data.dbr
+            ${{ runner.temp }}/seed/sha256.txt
+            ${{ runner.temp }}/seed/seed.json
+          if-no-files-found: warn
+          retention-days: 7

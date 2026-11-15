@@ -1,0 +1,41 @@
+name: macos27-probe
+
+# Recon for the macOS 27.3 seed run: runner disk headroom, AEA tooling and the
+# 25.3 GiB restore image's range support. No inputs, no artifacts.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host
+        run: |
+          sw_vers
+          uname -m
+          sysctl -n hw.ncpu hw.memsize
+          echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+          sudo -n true && echo "sudo: no password"
+          python3 --version
+          df -h / "$RUNNER_TEMP"
+      - name: AEA tooling
+        run: |
+          ls -l /usr/bin/aea || true
+          /usr/bin/aea -h 2>&1 | head -30 || true
+          command -v ipsw && ipsw version || echo "ipsw tool: absent"
+          brew --version | head -1
+      - name: Disk consumers
+        run: |
+          du -sh /Applications/Xcode.app 2>/dev/null || true
+          du -sh /Library/Developer/CoreSimulator 2>/dev/null || true
+          du -sh /Library/Developer/CoreSimulator/Volumes 2>/dev/null || true
+          du -sh /Library/Developer/CoreSimulator/Profiles/Runtimes 2>/dev/null || true
+          du -sh ~/Library/Developer 2>/dev/null || true
+      - name: Restore image range support
+        run: |
+          URL="https://updates.cdn-apple.com/2026FallSeed/53df7654-4865-4259-8dae-30177b76f104/UniversalMac_27.3_26C5035r_Restore.ipsw"
+          curl -s -o /dev/null --max-time 60 -r 0-1048575 -w 'range status=%{http_code} bytes=%{size_download} speed=%{speed_download}\n' "$URL"
+          curl -sIL --max-time 60 "$URL" | awk 'BEGIN{IGNORECASE=1} /^HTTP|^content-length|^accept-ranges/ {print}'
