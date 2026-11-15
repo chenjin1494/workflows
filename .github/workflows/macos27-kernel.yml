@@ -1,0 +1,68 @@
+name: macos27-kernel
+
+# macOS-only step #3: the arm64e kernel needs Apple clang (upstream LLVM rejects
+# the __ptrauth qualifier with the "authenticates-null-values" argument that the
+# macOS Kernel.framework private headers use), so XNU is built here and the
+# resulting kernel.macho is published for the Linux-side payload/boot image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref: {description: UniXNU commit, required: true, default: 2bc89720371e42dd07eaefe5f8a6c08111aeb300}
+      device_ref: {description: UniXNU-sheng commit, required: true, default: 9f5f0fb090a2ca87749941d51d7ac7b38b717008}
+      chip_id: {description: platform seed written into the ADT (8 hex), required: true, default: "01234567"}
+      steps: {description: unixnu build steps, required: false, default: "kernel package"}
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with: {repository: UniXNU/UniXNU, ref: "${{ inputs.unixnu_ref }}", path: UniXNU, fetch-depth: 0}
+      - uses: actions/checkout@v4
+        with: {repository: UniXNU/UniXNU-sheng, ref: "${{ inputs.device_ref }}", path: UniXNU-sheng, fetch-depth: 0}
+      - name: disk headroom
+        run: df -h / /Users/runner/work 2>/dev/null || df -h /
+      - name: toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version; xcrun --sdk iphoneos --show-sdk-version
+          python3 -V
+          (command -v ipsw || brew install blacktop/tap/ipsw) >/dev/null
+      - name: defconfig
+        run: |
+          cd UniXNU
+          ./unixnu defconfig sheng_macos_defconfig -D ../UniXNU-sheng --os macos-27
+          ./unixnu status --json -D ../UniXNU-sheng --os macos-27 > status.json
+          python3 -c "import json;d=json.load(open('status.json'));print(d['output']);print(d['components'])"
+      - name: fetch the small members
+        run: |
+          cd UniXNU
+          time ./unixnu ipsw fetch --os macos-27 -D ../UniXNU-sheng KernelCache DeviceTree StaticTrustCache "Cryptex1,SystemTrustCache" "Cryptex1,AppTrustCache"
+      - name: build
+        env:
+          UNIXNU_UNIQUE_CHIP_ID: ${{ inputs.chip_id }}
+        run: |
+          cd UniXNU
+          time ./unixnu build ${{ inputs.steps }} --os macos-27 -D ../UniXNU-sheng
+      - name: collect
+        if: always()
+        run: |
+          cd UniXNU
+          OUTDIR=$(python3 -c "import json;print(json.load(open('status.json'))['output'])")
+          DEST="$RUNNER_TEMP/out"; rm -rf "$DEST"; mkdir -p "$DEST"
+          ls -l "$OUTDIR" || true
+          for f in kernel/kernel.macho kernel/kernel.macho.adt package/Build/Out/AARCH64-DEBUG/UniXNU.efi; do
+            if [ -f "$OUTDIR/$f" ]; then mkdir -p "$DEST/$(dirname "$f")"; cp "$OUTDIR/$f" "$DEST/$f"; fi
+          done
+          cp "$OUTDIR"/logs/*.log "$DEST/" 2>/dev/null || true
+          (cd "$DEST" && find . -type f -exec shasum -a 256 {} + | tee sha256.txt; du -sh .)
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos27-kernel
+          path: ${{ runner.temp }}/out/**
+          if-no-files-found: warn
+          retention-days: 7
