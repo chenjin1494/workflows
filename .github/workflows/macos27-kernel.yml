@@ -17,6 +17,8 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 300
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with: {repository: UniXNU/UniXNU, ref: "${{ inputs.unixnu_ref }}", path: UniXNU, fetch-depth: 0}
