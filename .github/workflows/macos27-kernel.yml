@@ -1,9 +1,9 @@
 name: macos27-kernel
 
-# macOS-only step #3: the arm64e kernel needs Apple clang (upstream LLVM rejects
-# the __ptrauth qualifier with the "authenticates-null-values" argument that the
-# macOS Kernel.framework private headers use), so XNU is built here and the
-# resulting kernel.macho is published for the Linux-side payload/boot image.
+# macOS-only step: the arm64e kernel needs Apple clang, and CONFIG_XNU_SOURCE_STORAGE
+# needs the signed root windows that scripts/make-root-policies.py derives from the
+# OS / Cryptex1,SystemOS disk images carried by the userdata image. Both are produced
+# here; the kernel, its ADT, the boot manager and the policy material are published.
 
 on:
   workflow_dispatch:
@@ -11,12 +11,11 @@ on:
       unixnu_ref: {description: UniXNU commit, required: true, default: 2bc89720371e42dd07eaefe5f8a6c08111aeb300}
       device_ref: {description: UniXNU-sheng commit, required: true, default: 9f5f0fb090a2ca87749941d51d7ac7b38b717008}
       chip_id: {description: platform seed written into the ADT (8 hex), required: true, default: "01234567"}
-      steps: {description: unixnu build steps, required: false, default: "kernel package"}
 
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 300
+    timeout-minutes: 350
     env:
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -25,38 +24,87 @@ jobs:
       - uses: actions/checkout@v4
         with: {repository: UniXNU/UniXNU-sheng, ref: "${{ inputs.device_ref }}", path: UniXNU-sheng, fetch-depth: 0}
       - name: disk headroom
-        run: df -h / /Users/runner/work 2>/dev/null || df -h /
+        run: df -h /
       - name: toolchain
         run: |
           sudo xcode-select -s /Applications/Xcode.app
-          xcodebuild -version; xcrun --sdk iphoneos --show-sdk-version
-          python3 -V
+          xcodebuild -version; xcrun --sdk iphoneos --show-sdk-version; python3 -V
           (command -v ipsw || brew install blacktop/tap/ipsw) >/dev/null
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
       - name: defconfig
         run: |
           cd UniXNU
           ./unixnu defconfig sheng_macos_defconfig -D ../UniXNU-sheng --os macos-27
           ./unixnu status --json -D ../UniXNU-sheng --os macos-27 > status.json
-          python3 -c "import json;d=json.load(open('status.json'));print(d['output']);print(d['components'])"
-      - name: fetch the small members
+          python3 -c "import json;d=json.load(open('status.json'));print(d['output'])"
+      - name: small members
         run: |
           cd UniXNU
-          time ./unixnu ipsw fetch --os macos-27 -D ../UniXNU-sheng KernelCache DeviceTree StaticTrustCache "Cryptex1,SystemTrustCache" "Cryptex1,AppTrustCache"
+          ./unixnu ipsw fetch --os macos-27 -D ../UniXNU-sheng KernelCache DeviceTree StaticTrustCache "Cryptex1,SystemTrustCache" "Cryptex1,AppTrustCache" "Cryptex1,AppOS"
+      - name: root disk images
+        run: |
+          cd UniXNU
+          ./unixnu ipsw fetch --os macos-27 -D ../UniXNU-sheng OS "Cryptex1,SystemOS"
+          for member in 141-22233-021.dmg.aea 141-22145-021.dmg.aea; do
+            archive=$(find out/ipsw -name "$member" | head -1)
+            echo "decrypting $archive"
+            key=$(ipsw fw aea --key "$archive" | grep -m1 '^base64:')
+            sudo /usr/bin/aea decrypt -i "$archive" -o "$archive.partial" -key-value "$key"
+            mv "$archive.partial" "${archive%.aea}"
+          done
+          ls -l out/ipsw/*/ | head
+      - name: userdata windows
+        run: |
+          cd UniXNU
+          ./unixnu build userdata --os macos-27 -D ../UniXNU-sheng
+          OUTDIR=$(python3 -c "import json;print(json.load(open('status.json'))['output'])")
+          python3 - "$OUTDIR" <<'PY'
+          import json, sys
+          from pathlib import Path
+          out = Path(sys.argv[1]) / 'userdata'
+          report = json.loads((out / 'userdata-root.json').read_text())
+          image = out / 'userdata-root.img'
+          with image.open('rb') as handle:
+              for window in report['windows']:
+                  name, offset, size = window['name'], window['offset'], window['size']
+                  handle.seek(offset)
+                  with open(Path('/tmp') / f'{name}.img', 'wb') as target:
+                      remaining = size
+                      while remaining:
+                          blob = handle.read(min(64 << 20, remaining))
+                          if not blob:
+                              raise SystemExit(f'{name}: short window')
+                          target.write(blob)
+                          remaining -= len(blob)
+                  print(f'{name}: {size} bytes -> /tmp/{name}.img')
+          PY
+      - name: root policies
+        run: |
+          cd UniXNU
+          OUTDIR=$(python3 -c "import json;print(json.load(open('status.json'))['output'])")
+          python3 scripts/make-root-policies.py --tree "$OUTDIR/tree" \
+            --output "$OUTDIR/tree/scripts/policies/macos-27.3-26C5035r" \
+            --window "OS=/tmp/OS.img:84581E99-85BE-4957-AC53-2947E887B3E4" \
+            --window "SystemOS=/tmp/SystemOS.img:6678E466-2F88-4C56-9408-DC7361BAA0BA"
+          find "$OUTDIR/tree/scripts/policies" "$OUTDIR/tree/build" -maxdepth 3 -type f | head -20
       - name: build
         env:
           UNIXNU_UNIQUE_CHIP_ID: ${{ inputs.chip_id }}
         run: |
           cd UniXNU
-          time ./unixnu build ${{ inputs.steps }} --os macos-27 -D ../UniXNU-sheng
+          time ./unixnu build kernel package --os macos-27 -D ../UniXNU-sheng
       - name: collect
         if: always()
         run: |
           cd UniXNU
           OUTDIR=$(python3 -c "import json;print(json.load(open('status.json'))['output'])")
           DEST="$RUNNER_TEMP/out"; rm -rf "$DEST"; mkdir -p "$DEST"
-          ls -l "$OUTDIR" || true
           for f in kernel/kernel.macho kernel/kernel.macho.adt package/Build/Out/AARCH64-DEBUG/UniXNU.efi; do
             if [ -f "$OUTDIR/$f" ]; then mkdir -p "$DEST/$(dirname "$f")"; cp "$OUTDIR/$f" "$DEST/$f"; fi
+          done
+          if [ -d "$OUTDIR/tree/scripts/policies" ]; then mkdir -p "$DEST/policies"; cp -R "$OUTDIR/tree/scripts/policies/." "$DEST/policies/"; fi
+          for d in "$OUTDIR"/tree/build/verified-root-*; do
+            if [ -d "$d" ]; then mkdir -p "$DEST/build/$(basename "$d")"; cp "$d"/hashes.bin "$DEST/build/$(basename "$d")/" 2>/dev/null || true; fi
           done
           cp "$OUTDIR"/logs/*.log "$DEST/" 2>/dev/null || true
           (cd "$DEST" && find . -type f -exec shasum -a 256 {} + | tee sha256.txt; du -sh .)
